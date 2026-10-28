@@ -1,7 +1,12 @@
 # unihx
 
+[![release](https://img.shields.io/github/v/release/hq520it/unihx)](https://github.com/hq520it/unihx/releases)
+[![license](https://img.shields.io/github/license/hq520it/unihx)](https://github.com/hq520it/unihx/blob/main/LICENSE)
+
 > Build, debug and publish **uni-app** projects on Linux / macOS / Windows — **without HBuilderX**.
 > 离线打包、本地调试、自定义发行模式，全部走官方编译器。
+
+![unihx 控制台](docs/assets/screenshot.png)
 
 只封装 **uni-app 官方编译器（uni-cli）** 的跨平台构建工具：离线打包 + 本地调试。
 
