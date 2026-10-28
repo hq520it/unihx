@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=unihx 发行控制台
+Comment=uni-app 构建 / 自定义发行模式 / 上传 / Git
+Exec=unihx-gui
+Icon=unihx
+Terminal=false
+Categories=Development;
+StartupWMClass=unihx

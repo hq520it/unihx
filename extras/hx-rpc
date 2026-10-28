@@ -1,0 +1,228 @@
+#!/usr/bin/env python3
+"""hx-rpc — 直接通过 HBuilderX 的本地 IPC 驱动编译/发行，绕过 hbuilderx-cli。
+
+协议（逆向所得）：
+  Unix socket /tmp/hxf*，帧格式 Content-Length: N\\r\\n\\r\\n{json}
+  握手 client verify，params.source/workdir 必须等于 HBuilderX 目录，否则 auth=false
+  命令 {"method": "<命令>", "params": {...}}
+  输出由服务端以 log 帧推送，客户端需 ack {"id": ..., "result": null}
+  结束于 break 帧
+
+用法示例：
+  hx-rpc ver
+  hx-rpc project list
+  hx-rpc publish mp-weixin --project /path/to/app [--upload true --privatekey k --version 1.2.3]
+  hx-rpc publish app --project /path/to/app --type wgt --name app.wgt
+"""
+import glob
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import time
+
+HX = os.environ.get("HX_HOME", "/home/hong/.local/opt/HBuilderX")
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def find_sock():
+    cands = sorted(glob.glob("/tmp/hxf*"), key=os.path.getmtime, reverse=True)
+    return cands[0] if cands else None
+
+
+class Client:
+    def __init__(self, timeout=600):
+        self.timeout = timeout
+        self.sock = None
+        self.s = None
+        # 握手需要 source，命令帧不能带 source（服务端会当成非法参数回帮助）
+        self.verify_params = {"clientid": os.getpid(), "env": dict(os.environ),
+                              "source": HX, "workdir": HX}
+        self.cmd_base = {"clientid": os.getpid(), "env": dict(os.environ), "workdir": HX}
+
+    def connect(self):
+        for _ in range(2):
+            path = find_sock()
+            if path:
+                try:
+                    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    s.connect(path)
+                    self.s, self.sock = s, path
+                    return True
+                except OSError:
+                    pass
+            sys.stderr.write("[hx-rpc] HBuilderX 未运行，正在启动…\n")
+            subprocess.run(["hbuilderx-cli", "open"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            for _ in range(60):
+                time.sleep(1)
+                path = find_sock()
+                if not path:
+                    continue
+                try:
+                    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    s.connect(path)
+                    self.s, self.sock = s, path
+                    return True
+                except OSError:
+                    continue
+        return False
+
+    def send(self, obj):
+        body = json.dumps(obj, ensure_ascii=False).encode()
+        self.s.sendall(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+
+    def frame(self):
+        self.s.settimeout(self.timeout)
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            chunk = self.s.recv(65536)
+            if not chunk:
+                return None
+            buf += chunk
+        head, rest = buf.split(b"\r\n\r\n", 1)
+        n = int(head.split(b":")[1])
+        while len(rest) < n:
+            chunk = self.s.recv(65536)
+            if not chunk:
+                return None
+            rest += chunk
+        return json.loads(rest[:n])
+
+    def auth(self):
+        self.send({"method": "client verify", "params": self.verify_params})
+        while True:
+            f = self.frame()
+            if not f:
+                return False
+            if f.get("method") == "auth return":
+                return bool(f["params"].get("auth"))
+            if f.get("id"):
+                self.send({"id": f["id"], "result": None})
+
+    def run(self, method, extra):
+        params = dict(self.cmd_base)
+        params.update(extra)
+        self.send({"method": method, "params": params})
+        logs, result = [], {}
+        while True:
+            f = self.frame()
+            if f is None:
+                sys.stderr.write("\n[hx-rpc] 连接中断\n")
+                break
+            m = f.get("method")
+            if m == "log":
+                msg = ANSI.sub("", f["params"].get("message", ""))
+                logs.append(msg)
+                sys.stdout.write(msg + ("" if msg.endswith("\n") else "\n"))
+                sys.stdout.flush()
+                if f.get("id"):
+                    self.send({"id": f["id"], "result": None})
+            elif m == "break":
+                result = f.get("params", {})
+                if f.get("id"):
+                    self.send({"id": f["id"], "result": None})
+                break
+            elif f.get("id"):
+                self.send({"id": f["id"], "result": None})
+        if logs and not logs[-1].endswith("\n"):
+            sys.stdout.write("\n")
+        return logs, result
+
+
+def read_manifest(project):
+    """从 manifest.json 读 appid/versionName（容忍 // 注释与尾逗号）"""
+    path = os.path.join(project, "manifest.json")
+    if not os.path.isfile(path):
+        return {}
+    try:
+        text = open(path, encoding="utf-8").read()
+        try:
+            import json5
+            d = json5.loads(text)
+        except Exception:
+            text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+            text = re.sub(r"//[^\n]*", "", text)
+            text = re.sub(r",(\s*[}\]])", r"\1", text)
+            d = json.loads(text)
+    except Exception:
+        return {}
+    mp = d.get("mp-weixin") or {}
+    return {
+        "appid": mp.get("appid"),
+        "version": d.get("versionName"),
+        "name": d.get("name"),
+    }
+
+
+def parse_args(argv):
+    method_parts = []
+    i = 0
+    while i < len(argv) and not argv[i].startswith("--"):
+        method_parts.append(argv[i])
+        i += 1
+    opts = {}
+    while i < len(argv):
+        key = argv[i].lstrip("-")
+        i += 1
+        if i < len(argv) and not argv[i].startswith("--"):
+            val = argv[i]
+            i += 1
+        else:
+            val = "true"
+        opts[key] = val
+    return " ".join(method_parts), opts
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        return 2
+    method, opts = parse_args(sys.argv[1:])
+    if not method:
+        print(__doc__)
+        return 2
+
+    # 自动补全 appid / version
+    project = opts.get("project")
+    if project and method.startswith("publish"):
+        info = read_manifest(project)
+        if method == "publish mp-weixin":
+            opts.setdefault("appid", info.get("appid") or "")
+            opts.setdefault("version", info.get("version") or "1.0.0")
+
+    dry = opts.pop("dry-run", None)
+    extra = {k: v for k, v in opts.items() if v is not None}
+    # 布尔参数统一成字符串
+    extra = {k: (str(v).lower() if isinstance(v, bool) else v) for k, v in extra.items()}
+
+    if dry:
+        print(json.dumps({"method": method, "params": {k: v for k, v in extra.items() if k != "env"}}, ensure_ascii=False, indent=2))
+        return 0
+
+    cli = Client(timeout=int(opts.pop("timeout", 600)) if "timeout" in opts else 600)
+    # timeout 不作为业务参数发送
+    extra.pop("timeout", None)
+
+    if not cli.connect():
+        sys.stderr.write("[hx-rpc] 无法连接 HBuilderX\n")
+        return 1
+    if not cli.auth():
+        sys.stderr.write("[hx-rpc] 握手失败（auth=false）\n")
+        return 1
+
+    logs, result = cli.run(method, extra)
+    text = "".join(logs)
+
+    if method.startswith(("publish", "pack")):
+        ok = ("成功" in text) and ("失败" not in text)
+        if not ok:
+            sys.stderr.write("\n[hx-rpc] 构建失败（break=%s）\n" % result)
+            return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
