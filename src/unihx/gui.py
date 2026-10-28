@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame,
     QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QSplitter,
-    QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QMenu, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 import pyte
@@ -473,6 +473,8 @@ class MainWindow(QMainWindow):
         lv.addWidget(self.search)
         self.list = QListWidget()
         self.list.currentItemChanged.connect(self.on_select)
+        self.list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self.project_menu)
         lv.addWidget(self.list, 1)
         row = QHBoxLayout()
         refresh = QPushButton("刷新")
@@ -694,6 +696,47 @@ class MainWindow(QMainWindow):
         self.status.showMessage(f"共 {len(self.projects)} 个 uni-app 项目（{ROOT}）")
         if self.list.count() and not self.list.currentItem():
             self.list.setCurrentRow(0)
+
+    def project_menu(self, pos):
+        item = self.list.itemAt(pos)
+        if not item:
+            return
+        self.list.setCurrentRow(self.list.row(item))
+        menu = self._build_project_menu()
+        menu.exec(self.list.mapToGlobal(pos))
+
+    def _build_project_menu(self):
+        p = self.current_project()
+        menu = QMenu(self)
+        if not p:
+            return menu
+        menu.addAction("打开项目目录", lambda: self.open_project_dir(p))
+        menu.addAction("在终端中打开", lambda: self.open_project_terminal(p))
+        menu.addSeparator()
+        menu.addAction("Git 状态", lambda: self.git_status())
+        menu.addAction("Git 日志", lambda: self.git_log())
+        menu.addAction("全部暂存", lambda: self.run_git(["add", "-A"], "暂存全部"))
+        menu.addAction("提交…", self.focus_commit)
+        menu.addAction("拉取", lambda: self.run_git(["pull", "--ff-only"], "拉取"))
+        menu.addAction("推送", lambda: self.run_git(["push"], "推送"))
+        menu.addSeparator()
+        menu.addAction("移除项目", lambda: self.remove_project())
+        return menu
+
+    def open_project_dir(self, p):
+        QDesktopServices.openUrl(QUrl.fromLocalFile(p["path"]))
+
+    def open_project_terminal(self, p):
+        self.tabs.setCurrentIndex(2)
+        if self.terminal.master is not None and self.terminal.cwd != p["path"]:
+            self.terminal.start(p["path"])
+        elif self.terminal.master is None:
+            self.terminal.start(p["path"])
+        self.terminal.view.setFocus()
+
+    def focus_commit(self):
+        self.tabs.setCurrentIndex(1)
+        self.git_msg.setFocus()
 
     def add_project(self):
         path = QFileDialog.getExistingDirectory(self, "选择 uni-app 项目目录", os.path.expanduser("~"))
