@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame,
     QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QSplitter,
-    QMenu, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QMenu, QScrollArea, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 import pyte
@@ -508,7 +508,8 @@ class MainWindow(QMainWindow):
         self.log.setMaximumBlockCount(6000)
         self.log.setMinimumHeight(70)
 
-        right_split = QSplitter(Qt.Vertical)
+        self.right_split = QSplitter(Qt.Vertical)
+        right_split = self.right_split
         right_split.addWidget(self.tabs)
         right_split.addWidget(self.log)
         right_split.setStretchFactor(0, 3)
@@ -624,7 +625,14 @@ class MainWindow(QMainWindow):
         btns.addWidget(clear)
         v.addLayout(btns)
         v.addStretch(1)
-        return page
+        return self._wrap_scroll(page)
+
+    def _wrap_scroll(self, inner):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(inner)
+        return scroll
 
     def git_tab(self):
         page = QWidget()
@@ -669,7 +677,7 @@ class MainWindow(QMainWindow):
         row.addWidget(commit)
         row.addWidget(discard)
         v.addLayout(row)
-        return page
+        return self._wrap_scroll(page)
 
     def scan_projects(self):
         self.projects = []
@@ -852,6 +860,16 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "选择上传密钥", os.path.expanduser("~"))
         if path:
             self.key.setText(path)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "log") and hasattr(self, "right_split"):
+            max_h = max(120, self.height() // 2)
+            self.log.setMaximumHeight(max_h)
+            sizes = self.right_split.sizes()
+            if len(sizes) == 2 and sizes[1] > max_h:
+                total = sum(sizes)
+                self.right_split.setSizes([total - max_h, max_h])
 
     def on_tab_changed(self, idx):
         if self.tabs.widget(idx) is self.terminal:
