@@ -37,7 +37,22 @@
 
 ## 安装
 
-**Linux / macOS**
+**GitHub Release 安装（推荐，无需 PyPI）**
+
+```bash
+# 命令行（wheel 直接装）
+pip install https://github.com/hq520it/unihx/releases/download/v0.1.0/unihx-0.1.0-py3-none-any.whl
+
+# 含图形控制台
+pip install "unihx[gui] @ https://github.com/hq520it/unihx/releases/download/v0.1.0/unihx-0.1.0-py3-none-any.whl"
+
+# 或者下载后本地安装
+pip install ./unihx-0.1.0-py3-none-any.whl
+```
+
+> 也可以直接下载源码包：`unihx-0.1.0.tar.gz`（Release 页面）
+
+**源码安装（Linux / macOS）**
 
 ```bash
 git clone https://github.com/<you>/unihx.git

@@ -4,3 +4,6 @@ __pycache__/
 node_modules/
 dist/
 *.tar.gz
+
+build/
+*.egg-info/
