@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
 import pyte
 
 ROOT = os.environ.get("UNIAPP_ROOT", "/mnt/225GB/uni-app")
+CONFIG_DIR = os.path.expanduser("~/.local/share/unihx")
+PROJECTS_FILE = os.path.join(CONFIG_DIR, "projects.json")
 UNIHX = shutil.which("unihx") or os.path.expanduser("~/.local/bin/unihx")
 MPCI = shutil.which("miniprogram-ci") or "miniprogram-ci"
 
@@ -63,6 +65,21 @@ QLabel#hint {{ color: {SUBTEXT}; }}
 QTabBar::tab {{ padding: 6px 16px; border-radius: 6px; margin-right: 4px; }}
 QTabBar::tab:selected {{ background: {SURFACE}; color: {ACCENT}; }}
 """
+
+
+def load_project_config():
+    try:
+        d = json.load(open(PROJECTS_FILE, encoding="utf-8"))
+    except Exception:
+        d = {}
+    return {"extra": [x for x in d.get("extra", []) if isinstance(x, str)],
+            "hidden": [x for x in d.get("hidden", []) if isinstance(x, str)]}
+
+
+def save_project_config(cfg):
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(PROJECTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
 
 
 def read_manifest(project):
@@ -403,7 +420,9 @@ class DiffDialog(QDialog):
     def __init__(self, title, text, parent=None):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.resize(900, 600)
+        self.resize(1000, 680)
+        self.setMinimumSize(560, 360)
+        self.setSizeGripEnabled(True)
         v = QVBoxLayout(self)
         edit = QPlainTextEdit()
         edit.setReadOnly(True)
@@ -455,9 +474,17 @@ class MainWindow(QMainWindow):
         self.list = QListWidget()
         self.list.currentItemChanged.connect(self.on_select)
         lv.addWidget(self.list, 1)
-        refresh = QPushButton("刷新项目")
+        row = QHBoxLayout()
+        refresh = QPushButton("刷新")
         refresh.clicked.connect(self.scan_projects)
-        lv.addWidget(refresh)
+        add_btn = QPushButton("添加项目")
+        add_btn.clicked.connect(self.add_project)
+        remove_btn = QPushButton("移除")
+        remove_btn.clicked.connect(self.remove_project)
+        row.addWidget(refresh)
+        row.addWidget(add_btn)
+        row.addWidget(remove_btn)
+        lv.addLayout(row)
         splitter.addWidget(left)
 
         right = QWidget()
@@ -637,13 +664,28 @@ class MainWindow(QMainWindow):
 
     def scan_projects(self):
         self.projects = []
+        cfg = load_project_config()
+        hidden = {os.path.realpath(x) for x in cfg["hidden"]}
+        seen = set()
+
+        def add(p):
+            rp = os.path.realpath(p)
+            if rp in hidden or rp in seen:
+                return
+            if not os.path.isfile(os.path.join(p, "manifest.json")):
+                return
+            seen.add(rp)
+            info = read_manifest(p)
+            info["path"] = os.path.abspath(p)
+            info["dir"] = os.path.basename(os.path.normpath(p))
+            info["scripts"] = read_scripts(p)
+            self.projects.append(info)
+
         for p in sorted(glob.glob(os.path.join(ROOT, "*"))):
-            if os.path.isfile(os.path.join(p, "manifest.json")):
-                info = read_manifest(p)
-                info["path"] = p
-                info["dir"] = os.path.basename(p)
-                info["scripts"] = read_scripts(p)
-                self.projects.append(info)
+            add(p)
+        for p in cfg["extra"]:
+            if os.path.isdir(p):
+                add(p)
         self.list.clear()
         for p in self.projects:
             item = QListWidgetItem(f"{p['name']}   ·   {p['dir']}")
@@ -652,6 +694,41 @@ class MainWindow(QMainWindow):
         self.status.showMessage(f"共 {len(self.projects)} 个 uni-app 项目（{ROOT}）")
         if self.list.count() and not self.list.currentItem():
             self.list.setCurrentRow(0)
+
+    def add_project(self):
+        path = QFileDialog.getExistingDirectory(self, "选择 uni-app 项目目录", os.path.expanduser("~"))
+        if not path:
+            return
+        if not os.path.isfile(os.path.join(path, "manifest.json")):
+            QMessageBox.warning(self, "不是 uni-app 项目", "该目录下没有 manifest.json")
+            return
+        cfg = load_project_config()
+        rp = os.path.realpath(path)
+        if rp not in {os.path.realpath(x) for x in cfg["extra"]} and \
+                not rp.startswith(os.path.realpath(ROOT) + os.sep):
+            cfg["extra"].append(os.path.abspath(path))
+        cfg["hidden"] = [x for x in cfg["hidden"] if os.path.realpath(x) != rp]
+        save_project_config(cfg)
+        self.scan_projects()
+        for i in range(self.list.count()):
+            if os.path.realpath(self.list.item(i).data(Qt.UserRole)) == rp:
+                self.list.setCurrentRow(i)
+                break
+
+    def remove_project(self):
+        p = self.current_project()
+        if not p:
+            return
+        if QMessageBox.question(self, "移除项目",
+                                f"从列表中移除 {p['name']}？\n（不会删除项目文件）") != QMessageBox.Yes:
+            return
+        rp = os.path.realpath(p["path"])
+        cfg = load_project_config()
+        cfg["extra"] = [x for x in cfg["extra"] if os.path.realpath(x) != rp]
+        if rp not in {os.path.realpath(x) for x in cfg["hidden"]}:
+            cfg["hidden"].append(os.path.abspath(p["path"]))
+        save_project_config(cfg)
+        self.scan_projects()
 
     def filter_projects(self, text):
         text = text.strip().lower()
