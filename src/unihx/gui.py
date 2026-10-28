@@ -623,9 +623,16 @@ class MainWindow(QMainWindow):
         btns.addWidget(self.open_btn)
         btns.addStretch(1)
         btns.addWidget(clear)
-        v.addLayout(btns)
         v.addStretch(1)
-        return self._wrap_scroll(page)
+
+        outer = QWidget()
+        ov = QVBoxLayout(outer)
+        ov.setContentsMargins(0, 0, 0, 0)
+        ov.addWidget(self._wrap_scroll(page), 1)
+        bar = QWidget()
+        bar.setLayout(btns)
+        ov.addWidget(bar)          # 操作按钮常显，不随内容滚动
+        return outer
 
     def _wrap_scroll(self, inner):
         scroll = QScrollArea()
