@@ -121,7 +121,7 @@ unpackage/release/<name>.wgt
 }
 ```
 
-`--script custom-platform` 会设置 `UNI_SCRIPT`，触发 `#ifdef OPPEIN-MP-UAT` 条件编译。
+`--script custom-platform` 会设置 `UNI_SCRIPT`，触发 `#ifdef MY-MP-UAT` 条件编译。
 
 > 自定义模式的**平台由脚本的 `env.UNI_PLATFORM` 决定**（mp-weixin / h5 / app-plus），
 > 会覆盖 `--target`。GUI 里选择自定义模式后会自动切换并锁定目标平台。
