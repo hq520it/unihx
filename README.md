@@ -115,7 +115,7 @@ unpackage/release/<name>.wgt
     "custom-platform": {
       "title": "微信小程序体验版",
       "env": { "UNI_PLATFORM": "mp-weixin", "UAT": true },
-      "define": { "OPPEIN-MP-UAT": true }
+      "define": { "MY-MP-UAT": true }
     }
   }
 }
