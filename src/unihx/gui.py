@@ -14,13 +14,14 @@ import subprocess
 import sys
 import threading
 
-from PySide6.QtCore import Qt, QThread, Signal, QUrl, QEvent
-from PySide6.QtGui import QDesktopServices, QFont, QIcon, QKeySequence, QShortcut, QTextCursor
+from PySide6.QtCore import Qt, QThread, Signal, QUrl, QEvent, QTimer
+from PySide6.QtGui import (QColor, QDesktopServices, QFont, QIcon, QKeySequence,
+                           QPainter, QShortcut, QTextCursor)
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame,
     QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QSplitter,
-    QTabWidget, QVBoxLayout, QWidget,
+    QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 import pyte
@@ -208,6 +209,30 @@ class TerminalView(QPlainTextEdit):
         self.setCursorWidth(2)
         self.setStyleSheet("QPlainTextEdit{background:#181825;border:none;padding:4px;}")
         self.setFocusPolicy(Qt.StrongFocus)
+        self._cursor_pos = None
+        self._cursor_on = True
+
+    def set_block_cursor(self, pos):
+        self._cursor_pos = pos
+        self._refresh_cursor()
+
+    def toggle_cursor(self):
+        pass
+
+    def _refresh_cursor(self):
+        self.viewport().update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._cursor_pos is None:
+            return
+        cur = QTextCursor(self.document())
+        cur.setPosition(self._cursor_pos)
+        rect = self.cursorRect(cur)
+        w = max(6, self.fontMetrics().horizontalAdvance("M"))
+        rect.setWidth(w)
+        painter = QPainter(self.viewport())
+        painter.fillRect(rect, QColor("#a6e3a1"))
 
     def keyPressEvent(self, event):
         mods = event.modifiers()
@@ -231,6 +256,7 @@ class TerminalView(QPlainTextEdit):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.resized.emit()
+        self._refresh_cursor()
 
 
 class TerminalWidget(QWidget):
@@ -265,6 +291,7 @@ class TerminalWidget(QWidget):
         self.view.resized.connect(self._on_resize)
         v.addWidget(self.view, 1)
         self.data_received.connect(self._on_data)
+        # 光标常亮，避免闪烁时截图/观察不到
 
     def start(self, cwd=None):
         self.stop()
@@ -287,12 +314,15 @@ class TerminalWidget(QWidget):
         self.view.setFocus()
 
     def _reader(self):
-        while not self._stop and self.master is not None:
+        while not self._stop:
+            fd = self.master
+            if fd is None:
+                break
             try:
-                r, _, _ = select.select([self.master], [], [], 0.2)
+                r, _, _ = select.select([fd], [], [], 0.2)
                 if not r:
                     continue
-                data = os.read(self.master, 65536)
+                data = os.read(fd, 65536)
                 if not data:
                     break
                 self.data_received.emit(data)
@@ -350,16 +380,22 @@ class TerminalWidget(QWidget):
 
     def _render(self):
         lines = [line.rstrip() for line in self.screen.display]
+        cy, cx = self.screen.cursor.y, self.screen.cursor.x
+        if 0 <= cy < len(lines) and len(lines[cy]) <= cx:
+            lines[cy] = lines[cy] + " " * (cx - len(lines[cy]) + 1)
         text = "\n".join(lines).rstrip("\n")
         if self.view.toPlainText() != text:
             self.view.setPlainText(text)
         cursor = self.view.textCursor()
         cursor.movePosition(QTextCursor.Start)
-        for _ in range(min(self.screen.cursor.y, len(lines) - 1)):
+        for _ in range(min(cy, max(0, len(lines) - 1))):
             cursor.movePosition(QTextCursor.Down)
+        line_text = lines[cy] if lines and cy < len(lines) else ""
         cursor.movePosition(QTextCursor.Right, QTextCursor.MoveAnchor,
-                            min(self.screen.cursor.x, max(0, len(lines[self.screen.cursor.y]) if lines else 0)))
+                            min(cx, len(line_text)))
         self.view.setTextCursor(cursor)
+        self.view._cursor_on = True
+        self.view.set_block_cursor(cursor.position())
         self.view.ensureCursorVisible()
 
 
@@ -568,7 +604,8 @@ class MainWindow(QMainWindow):
                            ("拉取", lambda: self.run_git(["pull", "--ff-only"], "拉取")),
                            ("推送", lambda: self.run_git(["push"], "推送")),
                            ("新建分支", self.git_new_branch),
-                           ("切换分支", self.git_switch_branch)):
+                           ("切换分支", self.git_switch_branch),
+                           ("日志", self.git_log)):
             b = QPushButton(text)
             b.clicked.connect(slot)
             head.addWidget(b)
@@ -903,6 +940,12 @@ class MainWindow(QMainWindow):
         paths = self.selected_paths()
         if paths:
             self.run_git(["reset", "HEAD", "--"] + paths, "取消暂存")
+
+    def git_log(self):
+        r = self.git("log", "--graph", "--oneline", "--decorate",
+                     "--date=short", "--pretty=format:%h %ad %d %s", "-80")
+        text = (r.stdout if r and r.returncode == 0 else "") or "（没有提交记录）"
+        DiffDialog("Git 日志", text, self).exec()
 
     def git_diff(self, item):
         path = item.data(Qt.UserRole)
