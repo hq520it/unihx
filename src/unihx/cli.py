@@ -1287,8 +1287,11 @@ def cmd_android(args):
         _adb("-s", udid, "shell", "mkdir", "-p", dest)
         r = _adb("-s", udid, "push", www + "/.", dest + "/")
         log((r.stdout or r.stderr or "").strip().splitlines()[-1] if (r.stdout or r.stderr) else "push done")
-        r = _adb("-s", udid, "shell", "am", "start", "-n",
-                 f"{args.base_package}/io.dcloud.PandoraEntry")
+        res = _adb("-s", udid, "shell", "cmd", "package", "resolve-activity",
+                   "--brief", args.base_package).stdout or ""
+        comps = [ln.strip() for ln in res.splitlines() if "/" in ln]
+        comp = comps[-1] if comps else f"{args.base_package}/io.dcloud.PandoraEntryActivity"
+        r = _adb("-s", udid, "shell", "am", "start", "-n", comp)
         log((r.stdout or r.stderr or "").strip())
         log("已启动自定义基座；修改源码请重新执行或使用 --watch")
         return 0

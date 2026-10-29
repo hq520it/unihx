@@ -42,6 +42,22 @@ python3 push.py /tmp/app/www HBuilder
 - ❌ AUTOID Q9 真机（WebView **74**）：白屏（HBuilderX 官方运行同样白屏）
 - ✅ 热更新：`unihx android --watch`，改源码后自动推送并 reload（截图 `docs/assets/android-hotreload.png`）
 
+## 自定义基座验证
+
+`uni-app-xmes` 自带调试基座 `unpackage/debug/android_debug.apk`（包名 `com.oppein.xmestest`，arm-only）。
+
+```bash
+unihx android --www /tmp/xmes-app --appid __UNI__BCAAF06   --base-package com.oppein.xmestest --custom-base
+```
+
+真机日志确认基座加载了我们推送的资源：
+
+```
+createWindow before _url=file:///storage/emulated/0/Android/data/com.oppein.xmestest/apps/__UNI__BCAAF06/www/__uniappview.html
+```
+
+启动页正常显示（`docs/assets/android-custom-base.png`），后续页面仍受 WebView 74 限制。
+
 ## 已知问题
 
 - 标准基座加载后 view 层可能报 `Failed to receiveTasks, instance (N) is not available`，页面白屏
