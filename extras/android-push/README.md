@@ -40,6 +40,7 @@ python3 push.py /tmp/app/www HBuilder
 
 - ✅ Android 11 模拟器（WebView 83）+ 基座 15.26：`HELLO FROM UNIHX ANDROID` 正常渲染
 - ❌ AUTOID Q9 真机（WebView **74**）：白屏（HBuilderX 官方运行同样白屏）
+- ✅ 热更新：`unihx android --watch`，改源码后自动推送并 reload（截图 `docs/assets/android-hotreload.png`）
 
 ## 已知问题
 

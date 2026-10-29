@@ -83,6 +83,9 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 ```bash
 unihx build --project ./my-app --target app --out /tmp/www
 unihx android --project ./my-app --www /tmp/www
+
+# 热更新：监听源码改动，自动重编译 + 推送到基座
+unihx android --project ./my-app --watch
 ```
 
 - 自动 `adb reverse`、启动标准基座 `PullDebugActivity`、推送 wgt

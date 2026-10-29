@@ -1246,6 +1246,7 @@ def _read_appid(project):
 
 def cmd_android(args):
     """把 app-plus 资源推到 DCloud 基座运行（不依赖 HBuilderX）。"""
+    import time
     udid = _pick_device(args.device)
     if not udid:
         log("未找到已连接的 Android 设备（adb devices）")
@@ -1259,12 +1260,21 @@ def cmd_android(args):
             return 1
         www = tempfile.mkdtemp(prefix="unihx-android-")
         log(f"编译 app-plus → {www}")
-        r = subprocess.run([sys.executable, "-m", "unihx.cli", "build",
-                            "--project", args.project, "--target", "app",
-                            "--out", www], text=True)
-        if r.returncode != 0:
-            log("编译失败")
-            return r.returncode
+        cmd = [sys.executable, "-m", "unihx.cli", "build",
+               "--project", args.project, "--target", "app", "--out", www]
+        if args.watch:
+            cmd += ["--mode", "dev"]
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            for _ in range(120):
+                if os.path.isfile(os.path.join(www, "app-service.js")):
+                    break
+                time.sleep(1)
+            log("dev watch 构建已启动")
+        else:
+            r = subprocess.run(cmd, text=True)
+            if r.returncode != 0:
+                log("编译失败")
+                return r.returncode
 
     appid = args.appid or (_read_appid(args.project) if args.project else "") or "HBuilder"
     if appid.startswith("__UNI__") is False and args.appid is None and args.project:
@@ -1278,6 +1288,8 @@ def cmd_android(args):
 
     import functools
     import http.server
+    import mimetypes
+    import urllib.parse
     import socket
     import socketserver
     import threading
@@ -1302,9 +1314,16 @@ def cmd_android(args):
             pass
 
         def do_GET(self):
-            data = open(wgt, "rb").read()
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            rel = (q.get("path") or [""])[0]
+            full = wgt if rel == "app.wgt" else os.path.join(www, rel)
+            if not os.path.isfile(full):
+                self.send_error(404)
+                return
+            data = open(full, "rb").read()
             self.send_response(200)
-            self.send_header("Content-Type", "application/zip")
+            ctype = "application/zip" if rel == "app.wgt" else (mimetypes.guess_type(full)[0] or "application/octet-stream")
+            self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
@@ -1321,7 +1340,10 @@ def cmd_android(args):
                                       "app": {"appID": appid, "customBase": False},
                                       "refreashType": "reload", "associatePaths": ""}}
 
+    state = {"ws": None}
+
     def handler(ws):
+        state["ws"] = ws
         log("[基座] 已连接")
         try:
             first = ws.recv()
@@ -1352,6 +1374,49 @@ def cmd_android(args):
              "--es", "ip", "127.0.0.1", "--es", "port", str(ws_port),
              "--es", "appid", appid)
     log((r.stdout or r.stderr or "").strip())
+    if args.watch:
+        def _snap():
+            out = {}
+            for base, _d, names in os.walk(www):
+                for n in names:
+                    f = os.path.join(base, n)
+                    try:
+                        out[f] = os.path.getmtime(f), os.path.getsize(f)
+                    except OSError:
+                        pass
+            return out
+
+        def _watch():
+            last = _snap()
+            while True:
+                time.sleep(1.5)
+                cur = _snap()
+                changed = [f for f in cur if last.get(f) != cur[f]]
+                last = cur
+                if not changed or not state["ws"]:
+                    continue
+                entries = []
+                for f in changed:
+                    rel = os.path.relpath(f, www).replace(os.sep, "/")
+                    url = f"http://127.0.0.1:{http_port}/static/?path=" + urllib.parse.quote(rel)
+                    entries.append({"action": "writeFile", "sourcePath": url,
+                                    "name": os.path.basename(f),
+                                    "path": os.path.dirname(rel).strip("/"),
+                                    "fullPackage": False, "firstInstall": False})
+                upd = {"mobile": msg["mobile"], "contents": {
+                    "project": {"type": "UniApp", "appID": appid},
+                    "fileInfo": entries,
+                    "app": {"appID": appid, "customBase": False},
+                    "refreashType": "reload", "associatePaths": ""}}
+                try:
+                    state["ws"].send(json.dumps(upd, ensure_ascii=False))
+                    log(f"[热更新] 推送 {len(entries)} 个文件")
+                except Exception as e:
+                    log(f"[热更新] 发送失败: {e}")
+
+        threading.Thread(target=_watch, daemon=True).start()
+        log("已开启热更新监听（修改源码后自动推送）")
+
     log("运行中，Ctrl+C 结束")
     try:
         while True:
@@ -1456,6 +1521,7 @@ def main():
     a.add_argument("--appid")
     a.add_argument("--base-package", default="io.dcloud.HBuilder")
     a.add_argument("--port", type=int, help="固定 WebSocket 端口")
+    a.add_argument("--watch", action="store_true", help="监听输出目录变化并热更新")
     a.set_defaults(func=cmd_android)
 
     v = sub.add_parser("versions", help="查看已安装编译器")
