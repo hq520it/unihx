@@ -56,7 +56,8 @@ unihx android --www /tmp/xmes-app --appid __UNI__BCAAF06   --base-package com.op
 createWindow before _url=file:///storage/emulated/0/Android/data/com.oppein.xmestest/apps/__UNI__BCAAF06/www/__uniappview.html
 ```
 
-启动页正常显示（`docs/assets/android-custom-base.png`），后续页面仍受 WebView 74 限制。
+启动页正常显示；配合 ES5 构建后，真机可正常渲染登录页
+（`docs/assets/android-custom-login.png`：欧派 XMES 扫描终端 / 请选择基地 / 扫描二维码）。
 
 ## 白屏根因与修复
 
