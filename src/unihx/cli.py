@@ -1289,18 +1289,55 @@ def cmd_android(args):
         # 自定义基座：直接把资源推到该 app 的 www 再启动（无需调试服务）
         dest = f"/sdcard/Android/data/{args.base_package}/apps/{appid}/www"
         log(f"自定义基座模式：{args.base_package} / {appid}")
-        _adb("-s", udid, "shell", "am", "force-stop", args.base_package)
+        def _launch():
+            res = _adb("-s", udid, "shell", "cmd", "package", "resolve-activity",
+                       "--brief", args.base_package).stdout or ""
+            comps = [ln.strip() for ln in res.splitlines() if "/" in ln]
+            comp = comps[-1] if comps else f"{args.base_package}/io.dcloud.PandoraEntryActivity"
+            _adb("-s", udid, "shell", "am", "force-stop", args.base_package)
+            _adb("-s", udid, "shell", "am", "start", "-n", comp)
+
+        _adb("-s", udid, "shell", "force-stop", args.base_package)
         _adb("-s", udid, "shell", "rm", "-rf", dest)
         _adb("-s", udid, "shell", "mkdir", "-p", dest)
         r = _adb("-s", udid, "push", www + "/.", dest + "/")
         log((r.stdout or r.stderr or "").strip().splitlines()[-1] if (r.stdout or r.stderr) else "push done")
-        res = _adb("-s", udid, "shell", "cmd", "package", "resolve-activity",
-                   "--brief", args.base_package).stdout or ""
-        comps = [ln.strip() for ln in res.splitlines() if "/" in ln]
-        comp = comps[-1] if comps else f"{args.base_package}/io.dcloud.PandoraEntryActivity"
-        r = _adb("-s", udid, "shell", "am", "start", "-n", comp)
-        log((r.stdout or r.stderr or "").strip())
-        log("已启动自定义基座；修改源码请重新执行或使用 --watch")
+        _launch()
+        log("已启动自定义基座")
+
+        if args.watch:
+            def _snap():
+                out = {}
+                for base, _d, names in os.walk(www):
+                    for n in names:
+                        f = os.path.join(base, n)
+                        try:
+                            out[f] = os.path.getmtime(f), os.path.getsize(f)
+                        except OSError:
+                            pass
+                return out
+
+            last = _snap()
+            log("已开启热更新监听（修改源码后自动推送并重启基座）")
+            try:
+                while True:
+                    time.sleep(1.5)
+                    cur = _snap()
+                    changed = [f for f in cur if last.get(f) != cur[f]]
+                    last = cur
+                    if not changed:
+                        continue
+                    for f in changed:
+                        rel = os.path.relpath(f, www).replace(os.sep, "/")
+                        sub = os.path.dirname(rel)
+                        if sub:
+                            _adb("-s", udid, "shell", "mkdir", "-p", f"{dest}/{sub}")
+                        _adb("-s", udid, "push", f, f"{dest}/{rel}")
+                    _launch()
+                    log(f"[热更新] 推送 {len(changed)} 个文件并重启基座")
+            except KeyboardInterrupt:
+                pass
+            return 0
         return 0
     if appid.startswith("__UNI__") is False and args.appid is None and args.project:
         pass

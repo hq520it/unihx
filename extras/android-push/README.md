@@ -73,6 +73,16 @@ BROWSERSLIST="Android >= 4.4, ios >= 9, chrome >= 49"
 unihx 的 `build --target app` / `android` 已默认注入该变量，产物变为 ES5。
 实测真机（WebView 74）可正常显示（`docs/assets/android-pda-es5.png`）。
 
+## 自定义基座热更新
+
+```bash
+unihx android --www ./www --appid <appid> \
+  --base-package <pkg> --custom-base --watch
+```
+
+监听 www 变化 → `adb push` 变更文件 → 重启基座。
+（自定义基座没有 WS 调试通道，重载方式是重启 Activity。）
+
 ## 已知问题
 
 - 标准基座加载后 view 层可能报 `Failed to receiveTasks, instance (N) is not available`，页面白屏
