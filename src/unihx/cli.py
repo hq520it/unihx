@@ -1362,12 +1362,34 @@ def _read_appid(project):
     return d.get("id") or d.get("appid") or ""
 
 
+def _warn_native_plugins(project):
+    if not project:
+        return
+    try:
+        import json5
+        mf = json5.load(open(os.path.join(project, "manifest.json"), encoding="utf-8"))
+    except Exception:
+        try:
+            mf = json.load(open(os.path.join(project, "manifest.json"), encoding="utf-8"))
+        except Exception:
+            return
+    plugins = (mf.get("app-plus") or {}).get("nativePlugins") or mf.get("nativePlugins") or {}
+    if plugins:
+        names = ", ".join(list(plugins)[:4])
+        log(f"⚠ 项目使用了原生插件：{names}")
+        log("  标准基座不包含这些插件，运行时会报 xxx is not a function 并可能白屏")
+        log("  请改用自定义基座：--custom-base --base-package <自定义基座包名>")
+
+
 def cmd_android(args):
     """把 app-plus 资源推到 DCloud 基座运行（不依赖 HBuilderX）。"""
     import time
     udid = _pick_device(args.device)
     if not udid:
         return 1
+
+    if not args.custom_base:
+        _warn_native_plugins(args.project)
 
     if args.www:
         www = args.www
