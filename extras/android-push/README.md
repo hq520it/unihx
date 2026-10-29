@@ -36,6 +36,11 @@ unihx build --project /path/to/app --target app --out /tmp/app/www
 python3 push.py /tmp/app/www HBuilder
 ```
 
+## 验证结果
+
+- ✅ Android 11 模拟器（WebView 83）+ 基座 15.26：`HELLO FROM UNIHX ANDROID` 正常渲染
+- ❌ AUTOID Q9 真机（WebView **74**）：白屏（HBuilderX 官方运行同样白屏）
+
 ## 已知问题
 
 - 标准基座加载后 view 层可能报 `Failed to receiveTasks, instance (N) is not available`，页面白屏
