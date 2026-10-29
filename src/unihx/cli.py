@@ -1303,6 +1303,31 @@ def _apk_package(apk):
     return m.group(1) if m else None
 
 
+def _apk_runtime_sdk(apk):
+    """读自定义基座 APK 里的 dcloud_control.xml，返回 runtime SDK（如 1.9.9.80298）。"""
+    try:
+        import zipfile
+        with zipfile.ZipFile(apk) as z:
+            data = z.read("assets/data/dcloud_control.xml").decode("utf-8", "replace")
+        import re as _re
+        m = _re.search(r'version="([0-9.]+)"', data)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
+def _compiler_sdk():
+    """从 HBuilderX 安装目录读取当前运行时 SDK 版本。"""
+    f = os.path.expanduser("~/.local/opt/HBuilderX/plugins/launcher/base/version.txt")
+    try:
+        for line in open(f, encoding="utf-8"):
+            if line.startswith("inner_android_sdk_version="):
+                return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return None
+
+
 def _install_base_apk(udid, apk):
     """安装 APK 并返回包名（优先 aapt，失败则对比安装前后包列表）。"""
     if not os.path.isfile(apk):
@@ -1313,6 +1338,17 @@ def _install_base_apk(udid, apk):
     if not pkg:
         out = _adb("-s", udid, "shell", "pm", "list", "packages").stdout or ""
         before = {ln.split(":", 1)[1].strip() for ln in out.splitlines() if ":" in ln}
+    runtime = _apk_runtime_sdk(apk)
+    csdk = _compiler_sdk()
+    if runtime and csdk:
+        def _num(v):
+            return tuple(int(x) for x in v.split(".") if x.isdigit())
+        if _num(runtime) < _num(csdk):
+            log(f"⚠ 自定义基座运行时 SDK {runtime} 低于编译器 SDK {csdk}")
+            log("  基座可能缺少新 API，出现白屏/报错；建议用匹配版本的编译器，")
+            log("  或用当前 HBuilderX 重新制作自定义调试基座")
+        else:
+            log(f"基座运行时 SDK：{runtime}")
     log(f"安装基座 APK：{os.path.basename(apk)}")
     r = _adb("-s", udid, "install", "-r", apk)
     if r.returncode != 0:
