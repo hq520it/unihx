@@ -10,9 +10,11 @@ import termios
 import re
 import select
 import shutil
+import signal
 import subprocess
 import sys
 import threading
+import time
 
 from PySide6.QtCore import Qt, QThread, Signal, QUrl, QEvent, QTimer
 from PySide6.QtGui import (QColor, QDesktopServices, QFont, QIcon, QKeySequence,
@@ -137,6 +139,7 @@ class Runner(QThread):
         self.cmd = cmd
         self.cwd = cwd
         self.env_extra = env_extra or {}
+        self.proc = None
 
     def run(self):
         env = os.environ.copy()
@@ -144,13 +147,39 @@ class Runner(QThread):
         try:
             p = subprocess.Popen(self.cmd, cwd=self.cwd, env=env,
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                 text=True, bufsize=1, encoding="utf-8", errors="replace")
+                                 text=True, bufsize=1, encoding="utf-8", errors="replace",
+                                 start_new_session=True)
+            self.proc = p
         except Exception as e:
             self.done.emit(False, str(e))
             return
         for line in p.stdout:
             self.line.emit(line.rstrip("\n"))
         self.done.emit(p.wait() == 0, "")
+
+    def stop(self):
+        """终止整个进程组（含 dev watch 子进程）。"""
+        p = self.proc
+        if not p or p.poll() is not None:
+            return
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+        except Exception:
+            try:
+                p.terminate()
+            except Exception:
+                return
+        for _ in range(30):
+            if p.poll() is not None:
+                return
+            time.sleep(0.1)
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except Exception:
+            try:
+                p.kill()
+            except Exception:
+                pass
 
 
 class DevWatcher(QThread):
@@ -783,6 +812,7 @@ class MainWindow(QMainWindow):
         self.and_worker = Runner(cmd)
         self.and_worker.line.connect(self.on_android_line)
         self.and_worker.done.connect(self.on_android_done)
+        self._and_stopping = False
         self.and_start.setEnabled(False)
         self.and_stop.setEnabled(True)
         self.and_worker.start()
@@ -794,14 +824,23 @@ class MainWindow(QMainWindow):
     def on_android_done(self, ok, err):
         self.and_start.setEnabled(True)
         self.and_stop.setEnabled(False)
+        if getattr(self, "_and_stopping", False):
+            self._and_stopping = False
+            self.and_log.appendPlainText("\n⏹ 已停止")
+            return
         if err:
             self.and_log.appendPlainText("\n[错误] " + err)
-        self.and_log.appendPlainText("\n✅ 已结束" if ok else "\n❌ 已停止/失败")
+        self.and_log.appendPlainText("\n✅ 已结束" if ok else "\n❌ 异常退出")
 
     def stop_android(self):
+        self._and_stopping = True
         w = getattr(self, "and_worker", None)
         if w:
-            w.stop()
+            try:
+                w.stop()
+            except Exception as e:
+                self.and_log.appendPlainText(f"[停止失败] {e}")
+        self.and_stop.setEnabled(False)
         self.and_log.appendPlainText("\n[运行] 正在停止…")
 
     def git_tab(self):
