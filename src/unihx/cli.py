@@ -1288,6 +1288,48 @@ def _pick_device(preferred=None):
     return ready[0]["serial"]
 
 
+def _apk_package(apk):
+    """用 aapt 读取 APK 包名；没有 aapt 返回 None。"""
+    try:
+        out = subprocess.run(["aapt", "dump", "badging", apk],
+                             capture_output=True, text=True, timeout=30).stdout
+    except Exception:
+        return None
+    for tok in out.split():
+        if tok.startswith("name=") and "package" in out.split("package")[0]:
+            pass
+    import re as _re
+    m = _re.search(r"package: name='([^']+)'", out)
+    return m.group(1) if m else None
+
+
+def _install_base_apk(udid, apk):
+    """安装 APK 并返回包名（优先 aapt，失败则对比安装前后包列表）。"""
+    if not os.path.isfile(apk):
+        log(f"APK 不存在：{apk}")
+        return None
+    pkg = _apk_package(apk)
+    before = set()
+    if not pkg:
+        out = _adb("-s", udid, "shell", "pm", "list", "packages").stdout or ""
+        before = {ln.split(":", 1)[1].strip() for ln in out.splitlines() if ":" in ln}
+    log(f"安装基座 APK：{os.path.basename(apk)}")
+    r = _adb("-s", udid, "install", "-r", apk)
+    if r.returncode != 0:
+        log((r.stdout or r.stderr or "").strip()[-300:])
+        return None
+    if not pkg:
+        out = _adb("-s", udid, "shell", "pm", "list", "packages").stdout or ""
+        after = {ln.split(":", 1)[1].strip() for ln in out.splitlines() if ":" in ln}
+        new = sorted(after - before)
+        pkg = new[0] if new else None
+    if pkg:
+        log(f"基座包名：{pkg}")
+    else:
+        log("未能识别 APK 包名，请用 --base-package 指定")
+    return pkg
+
+
 def _pkg_version(udid, pkg):
     out = _adb("-s", udid, "shell", "dumpsys", "package", pkg).stdout or ""
     import re as _re
@@ -1388,7 +1430,7 @@ def cmd_android(args):
     if not udid:
         return 1
 
-    if not args.custom_base:
+    if not args.custom_base and not getattr(args, "base_apk", None):
         _warn_native_plugins(args.project)
 
     if args.www:
@@ -1419,6 +1461,13 @@ def cmd_android(args):
                 return r.returncode
 
     appid = args.appid or (_read_appid(args.project) if args.project else "") or "HBuilder"
+
+    if getattr(args, "base_apk", None):
+        pkg = _install_base_apk(udid, args.base_apk)
+        if not pkg:
+            return 1
+        args.base_package = pkg
+        args.custom_base = True
 
     if args.custom_base:
         if not _pkg_version(udid, args.base_package):
@@ -1725,6 +1774,7 @@ def main():
     a.add_argument("--device", help="adb 设备序列号")
     a.add_argument("--appid")
     a.add_argument("--base-package", default="io.dcloud.HBuilder")
+    a.add_argument("--base-apk", help="自定义基座 APK 路径（自动安装并识别包名）")
     a.add_argument("--port", type=int, help="固定 WebSocket 端口")
     a.add_argument("--watch", action="store_true", help="监听输出目录变化并热更新")
     a.add_argument("--custom-base", action="store_true", help="自定义基座模式：直接推资源到该 app 的 www")

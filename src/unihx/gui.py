@@ -527,6 +527,7 @@ class MainWindow(QMainWindow):
         self.scan_projects()
         self.refresh_compiler()
         self.refresh_devices()
+        self.refresh_bases()
 
     def build_tab(self):
         page = QWidget()
@@ -659,8 +660,12 @@ class MainWindow(QMainWindow):
 
         row2 = QHBoxLayout()
         row2.addWidget(QLabel("基座"))
-        self.base_pkg = QLineEdit("io.dcloud.HBuilder")
-        row2.addWidget(self.base_pkg, 1)
+        self.base_combo = QComboBox()
+        self.base_combo.setMinimumWidth(320)
+        row2.addWidget(self.base_combo, 1)
+        pick = QPushButton("选择 APK…")
+        pick.clicked.connect(self.pick_base_apk)
+        row2.addWidget(pick)
         self.custom_base = QCheckBox("自定义基座")
         row2.addWidget(self.custom_base)
         row2.addWidget(QLabel("appid"))
@@ -720,21 +725,58 @@ class MainWindow(QMainWindow):
             if i >= 0:
                 self.dev_combo.setCurrentIndex(i)
 
+    def refresh_bases(self):
+        if not hasattr(self, "base_combo"):
+            return
+        old = self.base_combo.currentData()
+        self.base_combo.clear()
+        self.base_combo.addItem("标准基座  io.dcloud.HBuilder",
+                                {"pkg": "io.dcloud.HBuilder"})
+        p = self.current_project()
+        bases = []
+        if p:
+            for sub in ("unpackage/debug", "unpackage/release"):
+                d = os.path.join(p["path"], sub)
+                if os.path.isdir(d):
+                    for n in sorted(os.listdir(d)):
+                        if n.lower().endswith(".apk"):
+                            bases.append(os.path.join(d, n))
+        for apk in bases:
+            self.base_combo.addItem(f"自定义基座  {os.path.basename(apk)}", {"apk": apk})
+        if old is not None:
+            for i in range(self.base_combo.count()):
+                if self.base_combo.itemData(i) == old:
+                    self.base_combo.setCurrentIndex(i)
+                    break
+
+    def pick_base_apk(self):
+        apk, _ = QFileDialog.getOpenFileName(self, "选择自定义基座 APK", os.path.expanduser("~"),
+                                             "Android APK (*.apk)")
+        if not apk:
+            return
+        self.base_combo.addItem(f"自定义基座  {os.path.basename(apk)}", {"apk": apk})
+        self.base_combo.setCurrentIndex(self.base_combo.count() - 1)
+        self.custom_base.setChecked(True)
+
     def start_android(self):
         p = self.current_project()
         if not p:
             self.and_log.appendPlainText("⚠️ 先选择一个项目")
             return
         serial = self.dev_combo.currentData()
-        pkg = self.base_pkg.text().strip() or "io.dcloud.HBuilder"
-        cmd = [UNIHX, "android", "--project", p["path"], "--base-package", pkg]
+        base = self.base_combo.currentData() or {"pkg": "io.dcloud.HBuilder"}
+        cmd = [UNIHX, "android", "--project", p["path"]]
+        if base.get("apk"):
+            cmd += ["--base-apk", base["apk"]]
+        else:
+            cmd += ["--base-package", base.get("pkg") or "io.dcloud.HBuilder"]
+            if self.custom_base.isChecked():
+                cmd.append("--custom-base")
         if serial:
             cmd += ["--device", serial]
         appid = self.and_appid.text().strip()
         if appid:
             cmd += ["--appid", appid]
-        if self.custom_base.isChecked():
-            cmd.append("--custom-base")
         if self.watch_check.isChecked():
             cmd.append("--watch")
         self.and_log.appendPlainText("[运行] " + " ".join(cmd) + "\n")
@@ -949,6 +991,7 @@ class MainWindow(QMainWindow):
         self.version.setText(p.get("version") or "1.0.0")
         self.appid.setText(p.get("appid") or "")
         self.name.setText(p["dir"] + ".wgt")
+        self.refresh_bases()
 
         self.script_platforms = {sc["name"]: sc.get("platform", "") for sc in (p.get("scripts") or [])}
         self.mode.clear()
