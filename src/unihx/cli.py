@@ -1277,6 +1277,21 @@ def cmd_android(args):
                 return r.returncode
 
     appid = args.appid or (_read_appid(args.project) if args.project else "") or "HBuilder"
+
+    if args.custom_base:
+        # 自定义基座：直接把资源推到该 app 的 www 再启动（无需调试服务）
+        dest = f"/sdcard/Android/data/{args.base_package}/apps/{appid}/www"
+        log(f"自定义基座模式：{args.base_package} / {appid}")
+        _adb("-s", udid, "shell", "am", "force-stop", args.base_package)
+        _adb("-s", udid, "shell", "rm", "-rf", dest)
+        _adb("-s", udid, "shell", "mkdir", "-p", dest)
+        r = _adb("-s", udid, "push", www + "/.", dest + "/")
+        log((r.stdout or r.stderr or "").strip().splitlines()[-1] if (r.stdout or r.stderr) else "push done")
+        r = _adb("-s", udid, "shell", "am", "start", "-n",
+                 f"{args.base_package}/io.dcloud.PandoraEntry")
+        log((r.stdout or r.stderr or "").strip())
+        log("已启动自定义基座；修改源码请重新执行或使用 --watch")
+        return 0
     if appid.startswith("__UNI__") is False and args.appid is None and args.project:
         pass
 
@@ -1522,6 +1537,7 @@ def main():
     a.add_argument("--base-package", default="io.dcloud.HBuilder")
     a.add_argument("--port", type=int, help="固定 WebSocket 端口")
     a.add_argument("--watch", action="store_true", help="监听输出目录变化并热更新")
+    a.add_argument("--custom-base", action="store_true", help="自定义基座模式：直接推资源到该 app 的 www")
     a.set_defaults(func=cmd_android)
 
     v = sub.add_parser("versions", help="查看已安装编译器")

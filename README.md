@@ -86,6 +86,9 @@ unihx android --project ./my-app --www /tmp/www
 
 # 热更新：监听源码改动，自动重编译 + 推送到基座
 unihx android --project ./my-app --watch
+
+# 自定义基座：直接推资源到指定 app 的 www（需要可调试的自定义基座 APK）
+unihx android --www /tmp/www --appid <appid> --base-package <package> --custom-base
 ```
 
 - 自动 `adb reverse`、启动标准基座 `PullDebugActivity`、推送 wgt
