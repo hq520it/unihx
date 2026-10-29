@@ -496,10 +496,11 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.addTab(self.build_tab(), "发版")
         self.tabs.addTab(self.git_tab(), "Git")
+        self.tabs.addTab(self.android_tab(), "运行")
         self.terminal = TerminalWidget()
         self.tabs.addTab(self.terminal, "终端")
         self.tabs.currentChanged.connect(self.on_tab_changed)
-        for i in range(3):
+        for i in range(4):
             QShortcut(QKeySequence(f"Ctrl+{i + 1}"), self,
                       activated=lambda idx=i: self.tabs.setCurrentIndex(idx))
 
@@ -525,6 +526,7 @@ class MainWindow(QMainWindow):
         self.status.showMessage("就绪")
         self.scan_projects()
         self.refresh_compiler()
+        self.refresh_devices()
 
     def build_tab(self):
         page = QWidget()
@@ -641,6 +643,125 @@ class MainWindow(QMainWindow):
         scroll.setWidget(inner)
         return scroll
 
+    def android_tab(self):
+        page = QWidget()
+        v = QVBoxLayout(page)
+
+        row1 = QHBoxLayout()
+        row1.addWidget(QLabel("设备"))
+        self.dev_combo = QComboBox()
+        self.dev_combo.setMinimumWidth(260)
+        row1.addWidget(self.dev_combo, 1)
+        refresh = QPushButton("刷新")
+        refresh.clicked.connect(self.refresh_devices)
+        row1.addWidget(refresh)
+        v.addLayout(row1)
+
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("基座"))
+        self.base_pkg = QLineEdit("io.dcloud.HBuilder")
+        row2.addWidget(self.base_pkg, 1)
+        self.custom_base = QCheckBox("自定义基座")
+        row2.addWidget(self.custom_base)
+        row2.addWidget(QLabel("appid"))
+        self.and_appid = QLineEdit()
+        self.and_appid.setPlaceholderText("留空自动读取 manifest")
+        row2.addWidget(self.and_appid, 1)
+        v.addLayout(row2)
+
+        row3 = QHBoxLayout()
+        self.watch_check = QCheckBox("热更新（--watch）")
+        row3.addWidget(self.watch_check)
+        row3.addStretch(1)
+        self.and_start = QPushButton("开始运行")
+        self.and_start.clicked.connect(self.start_android)
+        self.and_stop = QPushButton("停止")
+        self.and_stop.setEnabled(False)
+        self.and_stop.clicked.connect(self.stop_android)
+        clear = QPushButton("清屏")
+        clear.clicked.connect(lambda: self.and_log.clear())
+        row3.addWidget(self.and_start)
+        row3.addWidget(self.and_stop)
+        row3.addWidget(clear)
+        v.addLayout(row3)
+
+        self.and_log = QPlainTextEdit()
+        self.and_log.setReadOnly(True)
+        self.and_log.setMaximumBlockCount(8000)
+        self.and_log.setFont(QFont("JetBrains Mono, monospace", 10))
+        v.addWidget(self.and_log, 1)
+        return page
+
+    def refresh_devices(self):
+        if not hasattr(self, "dev_combo"):
+            return
+        old = self.dev_combo.currentData()
+        self.dev_combo.clear()
+        try:
+            out = subprocess.run(["adb", "devices", "-l"], capture_output=True, text=True).stdout
+        except Exception:
+            out = ""
+        for line in out.splitlines()[1:]:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split()
+            serial, state = parts[0], parts[1] if len(parts) > 1 else "?"
+            model = ""
+            for f in parts[2:]:
+                if f.startswith("model:"):
+                    model = f.split(":", 1)[1].replace("_", " ")
+            label = f"{model or serial}  ({serial})"
+            if state != "device":
+                label += f"  [{state}]"
+            self.dev_combo.addItem(label, serial)
+        if old is not None:
+            i = self.dev_combo.findData(old)
+            if i >= 0:
+                self.dev_combo.setCurrentIndex(i)
+
+    def start_android(self):
+        p = self.current_project()
+        if not p:
+            self.and_log.appendPlainText("⚠️ 先选择一个项目")
+            return
+        serial = self.dev_combo.currentData()
+        pkg = self.base_pkg.text().strip() or "io.dcloud.HBuilder"
+        cmd = [UNIHX, "android", "--project", p["path"], "--base-package", pkg]
+        if serial:
+            cmd += ["--device", serial]
+        appid = self.and_appid.text().strip()
+        if appid:
+            cmd += ["--appid", appid]
+        if self.custom_base.isChecked():
+            cmd.append("--custom-base")
+        if self.watch_check.isChecked():
+            cmd.append("--watch")
+        self.and_log.appendPlainText("[运行] " + " ".join(cmd) + "\n")
+        self.and_worker = Runner(cmd)
+        self.and_worker.line.connect(self.on_android_line)
+        self.and_worker.done.connect(self.on_android_done)
+        self.and_start.setEnabled(False)
+        self.and_stop.setEnabled(True)
+        self.and_worker.start()
+
+    def on_android_line(self, text):
+        self.and_log.appendPlainText(text)
+        self.and_log.verticalScrollBar().setValue(self.and_log.verticalScrollBar().maximum())
+
+    def on_android_done(self, ok, err):
+        self.and_start.setEnabled(True)
+        self.and_stop.setEnabled(False)
+        if err:
+            self.and_log.appendPlainText("\n[错误] " + err)
+        self.and_log.appendPlainText("\n✅ 已结束" if ok else "\n❌ 已停止/失败")
+
+    def stop_android(self):
+        w = getattr(self, "and_worker", None)
+        if w:
+            w.stop()
+        self.and_log.appendPlainText("\n[运行] 正在停止…")
+
     def git_tab(self):
         page = QWidget()
         v = QVBoxLayout(page)
@@ -755,7 +876,7 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(p["path"]))
 
     def open_project_terminal(self, p):
-        self.tabs.setCurrentIndex(2)
+        self.tabs.setCurrentIndex(3)
         if self.terminal.master is not None and self.terminal.cwd != p["path"]:
             self.terminal.start(p["path"])
         elif self.terminal.master is None:
