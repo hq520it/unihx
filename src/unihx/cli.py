@@ -1206,6 +1206,167 @@ def cmd_versions(args):
     return 0
 
 
+# ---------------- Android 基座运行（实验） ----------------
+
+def _adb(*args, capture=True):
+    return subprocess.run(["adb", *args], capture_output=capture, text=True)
+
+
+def _pick_device(preferred=None):
+    out = _adb("devices").stdout or ""
+    devs = [ln.split()[0] for ln in out.splitlines()[1:] if ln.strip().endswith("device")]
+    if preferred:
+        return preferred if preferred in devs else None
+    return devs[0] if devs else None
+
+
+def _make_wgt(www, dest):
+    import zipfile
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
+        for base, _dirs, names in os.walk(www):
+            for n in names:
+                if n.endswith(".wgt"):
+                    continue
+                full = os.path.join(base, n)
+                z.write(full, os.path.relpath(full, www).replace(os.sep, "/"))
+    return dest
+
+
+def _read_appid(project):
+    try:
+        import json5
+        d = json5.load(open(os.path.join(project, "manifest.json"), encoding="utf-8"))
+    except Exception:
+        try:
+            d = json.load(open(os.path.join(project, "manifest.json"), encoding="utf-8"))
+        except Exception:
+            d = {}
+    return d.get("id") or d.get("appid") or ""
+
+
+def cmd_android(args):
+    """把 app-plus 资源推到 DCloud 基座运行（不依赖 HBuilderX）。"""
+    udid = _pick_device(args.device)
+    if not udid:
+        log("未找到已连接的 Android 设备（adb devices）")
+        return 1
+
+    if args.www:
+        www = args.www
+    else:
+        if not args.project:
+            log("需要 --project 或 --www")
+            return 1
+        www = tempfile.mkdtemp(prefix="unihx-android-")
+        log(f"编译 app-plus → {www}")
+        r = subprocess.run([sys.executable, "-m", "unihx.cli", "build",
+                            "--project", args.project, "--target", "app",
+                            "--out", www], text=True)
+        if r.returncode != 0:
+            log("编译失败")
+            return r.returncode
+
+    appid = args.appid or (_read_appid(args.project) if args.project else "") or "HBuilder"
+    if appid.startswith("__UNI__") is False and args.appid is None and args.project:
+        pass
+
+    try:
+        from websockets.sync.server import serve as ws_serve
+    except Exception:
+        log("需要 python websockets：sudo apt install python3-websockets")
+        return 1
+
+    import functools
+    import http.server
+    import socket
+    import socketserver
+    import threading
+    import time
+    import urllib.parse
+    import zipfile
+
+    wgt = _make_wgt(www, os.path.join(www, "app.wgt"))
+
+    def free_port():
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        p = s.getsockname()[1]
+        s.close()
+        return p
+
+    http_port = free_port()
+    ws_port = args.port or free_port()
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            data = open(wgt, "rb").read()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    httpd = socketserver.ThreadingTCPServer(("127.0.0.1", http_port), H)
+    httpd.daemon_threads = True
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+    files = [{"action": "writeFile",
+              "sourcePath": f"http://127.0.0.1:{http_port}/static/?path=app.wgt",
+              "name": "app.wgt", "path": "", "fullPackage": True, "firstInstall": True}]
+    msg = {"mobile": {}, "contents": {"project": {"type": "UniApp", "appID": appid},
+                                      "fileInfo": files,
+                                      "app": {"appID": appid, "customBase": False},
+                                      "refreashType": "reload", "associatePaths": ""}}
+
+    def handler(ws):
+        log("[基座] 已连接")
+        try:
+            first = ws.recv()
+            log(f"[基座] {str(first)[:160]}")
+            try:
+                msg["mobile"] = json.loads(first).get("mobile") or {}
+            except Exception:
+                pass
+        except Exception:
+            pass
+        ws.send(json.dumps(msg, ensure_ascii=False))
+        log(f"[推送] {len(msg['contents']['fileInfo'])} 个文件（{appid}）")
+        try:
+            for m in ws:
+                log(f"[基座] {str(m)[:200]}")
+        except Exception:
+            pass
+
+    server = ws_serve(handler, "127.0.0.1", ws_port)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    log(f"HTTP={http_port} WS={ws_port} appid={appid}")
+
+    _adb("-s", udid, "reverse", f"tcp:{http_port}", f"tcp:{http_port}")
+    _adb("-s", udid, "reverse", f"tcp:{ws_port}", f"tcp:{ws_port}")
+    _adb("-s", udid, "shell", "am", "force-stop", args.base_package)
+    r = _adb("-s", udid, "shell", "am", "start", "-n",
+             f"{args.base_package}/io.dcloud.debug.PullDebugActivity",
+             "--es", "ip", "127.0.0.1", "--es", "port", str(ws_port),
+             "--es", "appid", appid)
+    log((r.stdout or r.stderr or "").strip())
+    log("运行中，Ctrl+C 结束")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        for port in (http_port, ws_port):
+            _adb("-s", udid, "reverse", "--remove", f"tcp:{port}")
+        server.shutdown()
+        httpd.shutdown()
+    return 0
+
+
+
 def main():
     p = argparse.ArgumentParser(prog="unihx", description="uni-app 离线打包与本地调试工具")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1287,6 +1448,15 @@ def main():
     c.add_argument("--force", action="store_true")
     c.add_argument("--version", help="remove 时指定版本")
     c.set_defaults(func=cmd_compiler)
+
+    a = sub.add_parser("android", help="运行到 Android 基座（实验，不依赖 HBuilderX）")
+    a.add_argument("--project")
+    a.add_argument("--www", help="直接使用已编译的 app-plus 目录")
+    a.add_argument("--device", help="adb 设备序列号")
+    a.add_argument("--appid")
+    a.add_argument("--base-package", default="io.dcloud.HBuilder")
+    a.add_argument("--port", type=int, help="固定 WebSocket 端口")
+    a.set_defaults(func=cmd_android)
 
     v = sub.add_parser("versions", help="查看已安装编译器")
     v.set_defaults(func=cmd_versions)

@@ -78,6 +78,17 @@ powershell -ExecutionPolicy Bypass -File install.ps1
   - 已安装 HBuilderX：自动探测 `~/.local/opt/HBuilderX`
   - 或 `unihx update` 从官方渠道下载
 
+## 运行到 Android 基座（实验）
+
+```bash
+unihx build --project ./my-app --target app --out /tmp/www
+unihx android --project ./my-app --www /tmp/www
+```
+
+- 自动 `adb reverse`、启动标准基座 `PullDebugActivity`、推送 wgt
+- 不依赖 HBuilderX；协议见 `extras/android-push/README.md`
+- 已知限制：设备 WebView 过旧（如 Chrome 74）会白屏，建议 WebView ≥ 90
+
 ## 快速开始
 
 ```bash
