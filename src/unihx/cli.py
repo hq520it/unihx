@@ -683,6 +683,10 @@ def cmd_build(args):
     env = os.environ.copy()
     env.update(make_env(project, out, platform_name, args.script, args.mode, root))
     env["UNI_HBUILDERX_PLUGINS"] = os.path.join(root, "plugins")
+    # app-plus 产物要兼容旧 Android WebView（如 Chrome 74），
+    # 否则 babel 会保留 ?. / ?? 等语法导致白屏
+    if platform_name == "app-plus" and "BROWSERSLIST" not in env:
+        env["BROWSERSLIST"] = "Android >= 4.4, ios >= 9, chrome >= 49"
 
     log(f"platform={PLATFORM_NAME} compiler={root}")
     log(f"uni-platform={platform_name} target={args.target}")
@@ -1262,16 +1266,19 @@ def cmd_android(args):
         log(f"编译 app-plus → {www}")
         cmd = [sys.executable, "-m", "unihx.cli", "build",
                "--project", args.project, "--target", "app", "--out", www]
+        child_env = os.environ.copy()
+        child_env.setdefault("BROWSERSLIST", "Android >= 4.4, ios >= 9, chrome >= 49")
         if args.watch:
             cmd += ["--mode", "dev"]
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             env=child_env)
             for _ in range(120):
                 if os.path.isfile(os.path.join(www, "app-service.js")):
                     break
                 time.sleep(1)
             log("dev watch 构建已启动")
         else:
-            r = subprocess.run(cmd, text=True)
+            r = subprocess.run(cmd, text=True, env=child_env)
             if r.returncode != 0:
                 log("编译失败")
                 return r.returncode

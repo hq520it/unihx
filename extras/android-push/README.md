@@ -58,6 +58,20 @@ createWindow before _url=file:///storage/emulated/0/Android/data/com.oppein.xmes
 
 启动页正常显示（`docs/assets/android-custom-base.png`），后续页面仍受 WebView 74 限制。
 
+## 白屏根因与修复
+
+新编译的 app-plus 产物默认目标较新，会保留 optional chaining（`?.`）等语法；
+Chrome 74 解析失败 → 白屏。
+
+修复：构建时设置
+
+```bash
+BROWSERSLIST="Android >= 4.4, ios >= 9, chrome >= 49"
+```
+
+unihx 的 `build --target app` / `android` 已默认注入该变量，产物变为 ES5。
+实测真机（WebView 74）可正常显示（`docs/assets/android-pda-es5.png`）。
+
 ## 已知问题
 
 - 标准基座加载后 view 层可能报 `Failed to receiveTasks, instance (N) is not available`，页面白屏
