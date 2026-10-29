@@ -93,6 +93,8 @@ unihx android --www /tmp/www --appid <appid> --base-package <package> --custom-b
 
 - 自动 `adb reverse`、启动标准基座 `PullDebugActivity`、推送 wgt
 - 不依赖 HBuilderX；协议见 `extras/android-push/README.md`
+- **设备选择**：多设备时交互选择（非交互环境用 `--device` 指定），自动识别未授权/离线
+- **基座检查**：启动前检查基座是否安装、版本是否与编译器匹配（如 5.26 ↔ 15.26），不匹配会提示
 - **白屏修复**：app-plus 产物会自动加 `BROWSERSLIST="Android >= 4.4, ios >= 9, chrome >= 49"`，
   避免 `?.`/`??` 等新语法在旧 WebView（如 Chrome 74）上解析失败
 - 旧设备（WebView 74）实测可正常渲染（见 `docs/assets/android-pda-es5.png`）

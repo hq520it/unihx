@@ -1216,12 +1216,126 @@ def _adb(*args, capture=True):
     return subprocess.run(["adb", *args], capture_output=capture, text=True)
 
 
+def _list_devices():
+    """返回 [{serial, state, model}]，过滤掉 adb server 噪音。"""
+    out = _adb("devices", "-l").stdout or ""
+    devs = []
+    for ln in out.splitlines()[1:]:
+        ln = ln.strip()
+        if not ln:
+            continue
+        parts = ln.split()
+        serial, state = parts[0], parts[1] if len(parts) > 1 else "?"
+        model = ""
+        for f in parts[2:]:
+            if f.startswith("model:"):
+                model = f.split(":", 1)[1].replace("_", " ")
+        devs.append({"serial": serial, "state": state, "model": model})
+    return devs
+
+
 def _pick_device(preferred=None):
-    out = _adb("devices").stdout or ""
-    devs = [ln.split()[0] for ln in out.splitlines()[1:] if ln.strip().endswith("device")]
+    devs = _list_devices()
+    ready = [d for d in devs if d["state"] == "device"]
+
     if preferred:
-        return preferred if preferred in devs else None
-    return devs[0] if devs else None
+        for d in ready:
+            if d["serial"] == preferred:
+                return d["serial"]
+        # 设备存在但未授权 / 离线
+        for d in devs:
+            if d["serial"] == preferred:
+                if d["state"] == "unauthorized":
+                    log(f"设备 {preferred} 未授权：请在手机上点“允许 USB 调试”后重试")
+                else:
+                    log(f"设备 {preferred} 状态异常：{d['state']}")
+                return None
+        log(f"未找到设备 {preferred}，当前设备：")
+        for d in devs:
+            log(f"  - {d['serial']}  {d['state']}  {d['model']}")
+        return None
+
+    if not ready:
+        if any(d["state"] == "unauthorized" for d in devs):
+            log("检测到设备但未授权：请在手机上确认「允许 USB 调试」")
+        else:
+            log("未检测到 Android 设备，请检查：")
+            log("  1. USB 线是否支持数据传输（不是充电线）")
+            log("  2. 手机通知栏 USB 用途选「传输文件 / MTP」")
+            log("  3. 开发者选项里「USB 调试」已开启")
+            log("  4. 换主板后置 USB 口后运行 adb devices 确认")
+        return None
+
+    if len(ready) == 1:
+        return ready[0]["serial"]
+
+    # 多设备：交互选择；非交互环境默认第一个并提示
+    log("检测到多个 Android 设备：")
+    for i, d in enumerate(ready, 1):
+        log(f"  {i}. {d['serial']}  {d['model']}")
+    if sys.stdin.isatty():
+        try:
+            choice = input("请选择设备序号（回车默认 1）：").strip()
+        except EOFError:
+            choice = ""
+        try:
+            idx = int(choice) - 1 if choice else 0
+            return ready[max(0, min(idx, len(ready) - 1))]["serial"]
+        except ValueError:
+            log("输入无效，使用第一个设备")
+    else:
+        log("非交互环境，使用第一个设备（可用 --device 指定）")
+    return ready[0]["serial"]
+
+
+def _pkg_version(udid, pkg):
+    out = _adb("-s", udid, "shell", "dumpsys", "package", pkg).stdout or ""
+    import re as _re
+    m = _re.search(r"versionName=([0-9][0-9.]*)", out)
+    return m.group(1) if m else None
+
+
+def _compiler_version():
+    """从已安装编译器目录名推断编译器版本，如 local-5.26.2026090413.2624 -> 5.26。"""
+    base = os.path.expanduser("~/.local/share/unihx/compilers")
+    best = None
+    try:
+        for name in os.listdir(base):
+            m = re.search(r"(\d+)\.(\d+)\.", name)
+            if m:
+                key = (int(m.group(1)), int(m.group(2)))
+                if best is None or key > best[0]:
+                    best = (key, f"{key[0]}.{key[1]}")
+    except OSError:
+        pass
+    return best[1] if best else None
+
+
+def _check_base_version(udid, pkg, custom_base=False):
+    """基座版本与编译器版本不匹配时给出提示（标准基座 15.x 对应编译器 5.x）。"""
+    ver = _pkg_version(udid, pkg)
+    if not ver:
+        log(f"未检测到基座 {pkg}，请先安装：")
+        log(f"  adb -s {udid} install <android_base.apk>")
+        return False
+    log(f"基座版本：{pkg} {ver}")
+    if custom_base:
+        return True
+    cv = _compiler_version()
+    if not cv:
+        return True
+    try:
+        bmaj, bmin = [int(x) for x in ver.split(".")[:2]]
+        cmaj, cmin = [int(x) for x in cv.split(".")[:2]]
+    except ValueError:
+        return True
+    expected = (cmaj + 10, cmin)
+    if (bmaj, bmin) != expected:
+        log(f"⚠ 版本不匹配：编译器 {cv}（期望基座 {expected[0]}.{expected[1]}），"
+            f"当前基座 {ver}")
+        log("  可能出现版本警告或白屏；建议安装匹配基座：")
+        log("  HBuilderX 安装目录/plugins/launcher/base/android_base.apk")
+    return True
 
 
 def _make_wgt(www, dest):
@@ -1253,7 +1367,6 @@ def cmd_android(args):
     import time
     udid = _pick_device(args.device)
     if not udid:
-        log("未找到已连接的 Android 设备（adb devices）")
         return 1
 
     if args.www:
@@ -1286,6 +1399,12 @@ def cmd_android(args):
     appid = args.appid or (_read_appid(args.project) if args.project else "") or "HBuilder"
 
     if args.custom_base:
+        if not _pkg_version(udid, args.base_package):
+            log(f"未安装自定义基座 {args.base_package}，请先：")
+            log(f"  adb -s {udid} install <自定义调试基座.apk>")
+            return 1
+        if not _check_base_version(udid, args.base_package, custom_base=True):
+            return 1
         # 自定义基座：直接把资源推到该 app 的 www 再启动（无需调试服务）
         dest = f"/sdcard/Android/data/{args.base_package}/apps/{appid}/www"
         log(f"自定义基座模式：{args.base_package} / {appid}")
@@ -1424,6 +1543,8 @@ def cmd_android(args):
         except Exception:
             pass
 
+    if not _check_base_version(udid, args.base_package):
+        return 1
     server = ws_serve(handler, "127.0.0.1", ws_port)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     log(f"HTTP={http_port} WS={ws_port} appid={appid}")

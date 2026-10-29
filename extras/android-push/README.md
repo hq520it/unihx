@@ -73,6 +73,13 @@ BROWSERSLIST="Android >= 4.4, ios >= 9, chrome >= 49"
 unihx 的 `build --target app` / `android` 已默认注入该变量，产物变为 ES5。
 实测真机（WebView 74）可正常显示（`docs/assets/android-pda-es5.png`）。
 
+## 设备与版本检查
+
+- 多设备：交互式选择，或 `--device <serial>`
+- 设备未授权/离线：给出对应提示
+- 基座未安装：提示 `adb install <android_base.apk>`
+- 基座与编译器版本不匹配：提示期望版本（编译器 5.26 → 基座 15.26）
+
 ## 自定义基座热更新
 
 ```bash
