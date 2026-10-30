@@ -23,7 +23,7 @@
 - **本地调试**：watch 增量编译 + 自动拉起微信开发者工具
 - **自定义发行模式**：读取 `package.json` 的 `uni-app.scripts`（体验版 / 测试环境等条件编译）
 - **编译器在线更新**：DCloud 官方 `release.json` 渠道，版本可切换
-- **可选 GUI**：PySide6 桌面控制台（项目、发行模式、构建、Git）
+- **可选 GUI**：PySide6 桌面控制台（项目、发行模式、构建、Git、Android 运行/热更新）
 
 ## 平台支持
 
@@ -85,7 +85,8 @@ unihx build --project ./my-app --target app --out /tmp/www
 unihx android --project ./my-app --www /tmp/www
 
 # 热更新：监听源码改动，自动重编译 + 推送到基座
-unihx android --project ./my-app --watch
+unihx android --project ./my-app --watch     # 开发 + 热更新
+unihx android --project ./my-app --dev       # 开发构建（不热更新）
 
 # 自定义基座：直接推资源到指定 app 的 www（需要可调试的自定义基座 APK）
 unihx android --www /tmp/www --appid <appid> --base-package <package> --custom-base
