@@ -685,6 +685,8 @@ def cmd_build(args):
     env["UNI_HBUILDERX_PLUGINS"] = os.path.join(root, "plugins")
     # app-plus 产物要兼容旧 Android WebView（如 Chrome 74），
     # 否则 babel 会保留 ?. / ?? 等语法导致白屏
+    if platform_name == "app-plus" and (getattr(args, "modern", False) or getattr(args, "browserslist", None)):
+        log("注意：uni-app 的 app-plus 编译器会覆盖 browserslist，--modern/--browserslist 当前不会改变产物")
     if platform_name == "app-plus":
         if getattr(args, "modern", False):
             env["BROWSERSLIST"] = "Android >= 9, chrome >= 90, ios >= 14"
