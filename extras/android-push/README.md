@@ -90,6 +90,17 @@ unihx android --www ./www --appid <appid> \
 监听 www 变化 → `adb push` 变更文件 → 重启基座。
 （自定义基座没有 WS 调试通道，重载方式是重启 Activity。）
 
+## 构建模式怎么选
+
+| 模式 | 适用 |
+|---|---|
+| 生产（默认） | 兼容旧设备/旧 WebView，最稳 |
+| 开发 dev | 需要调试但不要热更新（体积大，旧 WebView 可能白屏） |
+| 开发 + 热更新 | 改代码自动推送；旧 WebView/旧基座上可能白屏 |
+
+`BROWSERSLIST` 对 app-plus 生产构建**没有实际影响**（实测产物 md5 相同），
+所以没有暴露 ES5/现代开关。
+
 ## 已知问题
 
 - 标准基座加载后 view 层可能报 `Failed to receiveTasks, instance (N) is not available`，页面白屏

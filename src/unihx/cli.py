@@ -685,8 +685,13 @@ def cmd_build(args):
     env["UNI_HBUILDERX_PLUGINS"] = os.path.join(root, "plugins")
     # app-plus 产物要兼容旧 Android WebView（如 Chrome 74），
     # 否则 babel 会保留 ?. / ?? 等语法导致白屏
-    if platform_name == "app-plus" and "BROWSERSLIST" not in env:
-        env["BROWSERSLIST"] = "Android >= 4.4, ios >= 9, chrome >= 49"
+    if platform_name == "app-plus":
+        if getattr(args, "modern", False):
+            env["BROWSERSLIST"] = "Android >= 9, chrome >= 90, ios >= 14"
+        elif getattr(args, "browserslist", None):
+            env["BROWSERSLIST"] = args.browserslist
+        elif "BROWSERSLIST" not in env:
+            env["BROWSERSLIST"] = "Android >= 4.4, ios >= 9, chrome >= 49"
 
     log(f"platform={PLATFORM_NAME} compiler={root}")
     log(f"uni-platform={platform_name} target={args.target}")
@@ -1480,8 +1485,15 @@ def cmd_android(args):
         cmd = [sys.executable, "-m", "unihx.cli", "build",
                "--project", args.project, "--target", "app", "--out", www]
         child_env = os.environ.copy()
-        child_env.setdefault("BROWSERSLIST", "Android >= 4.4, ios >= 9, chrome >= 49")
-        if args.watch:
+        if args.modern:
+            child_env["BROWSERSLIST"] = "Android >= 9, chrome >= 90, ios >= 14"
+            cmd.append("--modern")
+        elif args.browserslist:
+            child_env["BROWSERSLIST"] = args.browserslist
+            cmd += ["--browserslist", args.browserslist]
+        else:
+            child_env.setdefault("BROWSERSLIST", "Android >= 4.4, ios >= 9, chrome >= 49")
+        if args.watch or getattr(args, "dev", False):
             cmd += ["--mode", "dev"]
             subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              env=child_env)
@@ -1745,6 +1757,9 @@ def main():
     b.add_argument("--vite", action="store_true", help="使用 vite 编译器（vue3 项目）")
     b.add_argument("--install", action="store_true", help="缺少 node_modules 时自动 npm install")
     b.add_argument("--no-auto-install", action="store_true", help="找不到编译器时不自动下载")
+    b.add_argument("--modern", action="store_true",
+                   help="app 目标使用现代 JS（不注入 ES5 browserslist，适合 WebView 90+）")
+    b.add_argument("--browserslist", help="自定义 browserslist（覆盖默认 ES5 目标）")
     b.add_argument("--registry", help="npm 源（配合 --install）")
     b.add_argument("--npm", action="store_true", help="用项目自己的 npm scripts 构建（无需 HBuilderX 编译器）")
     b.add_argument("--isolate", action="store_true", help="强制隔离工作区构建")
@@ -1813,6 +1828,9 @@ def main():
     a.add_argument("--base-apk", help="自定义基座 APK 路径（自动安装并识别包名）")
     a.add_argument("--port", type=int, help="固定 WebSocket 端口")
     a.add_argument("--watch", action="store_true", help="监听输出目录变化并热更新")
+    a.add_argument("--dev", action="store_true", help="使用开发构建（dev，默认生产构建）")
+    a.add_argument("--modern", action="store_true", help="使用现代 JS（WebView 90+），默认 ES5 兼容")
+    a.add_argument("--browserslist", help="自定义 browserslist")
     a.add_argument("--custom-base", action="store_true", help="自定义基座模式：直接推资源到该 app 的 www")
     a.set_defaults(func=cmd_android)
 

@@ -704,8 +704,13 @@ class MainWindow(QMainWindow):
         v.addLayout(row2)
 
         row3 = QHBoxLayout()
-        self.watch_check = QCheckBox("热更新（--watch）")
-        row3.addWidget(self.watch_check)
+        row3.addWidget(QLabel("构建"))
+        self.build_mode = QComboBox()
+        self.build_mode.addItem("生产构建（兼容旧设备，推荐）", "prod")
+        self.build_mode.addItem("开发构建（dev）", "dev")
+        self.build_mode.addItem("开发 + 热更新（--watch）", "watch")
+        self.build_mode.setMinimumWidth(240)
+        row3.addWidget(self.build_mode)
         row3.addStretch(1)
         self.and_start = QPushButton("开始运行")
         self.and_start.clicked.connect(self.start_android)
@@ -806,8 +811,11 @@ class MainWindow(QMainWindow):
         appid = self.and_appid.text().strip()
         if appid:
             cmd += ["--appid", appid]
-        if self.watch_check.isChecked():
+        mode = self.build_mode.currentData()
+        if mode == "watch":
             cmd.append("--watch")
+        elif mode == "dev":
+            cmd.append("--dev")
         self.and_log.appendPlainText("[运行] " + " ".join(cmd) + "\n")
         self.and_worker = Runner(cmd)
         self.and_worker.line.connect(self.on_android_line)
