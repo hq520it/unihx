@@ -101,6 +101,16 @@ unihx android --www ./www --appid <appid> \
 `BROWSERSLIST` 对 app-plus 生产构建**没有实际影响**（实测产物 md5 相同），
 所以没有暴露 ES5/现代开关。
 
+## 白屏排查清单（真机实测）
+
+1. **设备是否联网**：`adb shell ip route get 8.8.8.8` 是否有 `via`；离线时依赖接口的应用会白屏
+2. **构建模式**：旧设备/旧基座优先用「生产构建」，dev/`--watch` 更容易白屏
+3. **应用自己的配置目录**：如 XMES 需要 `/storage/emulated/0/xmes-app/device.txt`，
+   目录被删会在日志报 `getFile ... code 10`，页面空白
+4. **基座 SDK 版本**：低于编译器 SDK 会警告，建议用匹配基座或重新制作自定义基座
+
+`unihx android` 已内置第 1 条的离线检查。
+
 ## 已知问题
 
 - 标准基座加载后 view 层可能报 `Failed to receiveTasks, instance (N) is not available`，页面白屏

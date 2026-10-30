@@ -1447,6 +1447,14 @@ def _read_appid(project):
     return d.get("id") or d.get("appid") or ""
 
 
+def _device_online(udid):
+    out = _adb("-s", udid, "shell", "ip", "route", "get", "8.8.8.8").stdout or ""
+    if " via " in out or " dev " in out:
+        return True
+    ping = _adb("-s", udid, "shell", "ping", "-c", "1", "-W", "2", "223.5.5.5").stdout or ""
+    return "1 received" in ping
+
+
 def _warn_native_plugins(project):
     if not project:
         return
@@ -1472,6 +1480,10 @@ def cmd_android(args):
     udid = _pick_device(args.device)
     if not udid:
         return 1
+
+    if not _device_online(udid):
+        log("⚠ 设备当前没有默认网络路由（离线）")
+        log("  依赖接口的应用会停在白屏；请先连接 Wi-Fi / 内网后重试")
 
     if not args.custom_base and not getattr(args, "base_apk", None):
         _warn_native_plugins(args.project)
