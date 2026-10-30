@@ -1476,6 +1476,7 @@ def _warn_native_plugins(project):
 
 def cmd_android(args):
     """把 app-plus 资源推到 DCloud 基座运行（不依赖 HBuilderX）。"""
+    import threading
     import time
     udid = _pick_device(args.device)
     if not udid:
@@ -1507,20 +1508,57 @@ def cmd_android(args):
             cmd += ["--browserslist", args.browserslist]
         else:
             child_env.setdefault("BROWSERSLIST", "Android >= 4.4, ios >= 9, chrome >= 49")
-        if args.watch or getattr(args, "dev", False):
+        use_dev = bool(getattr(args, "dev", False))
+        if use_dev:
             cmd += ["--mode", "dev"]
+
+        if args.watch and use_dev:
+            # 开发 + 热更新：uni-app 自身 watch，增量编译
             subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              env=child_env)
             for _ in range(120):
                 if os.path.isfile(os.path.join(www, "app-service.js")):
                     break
                 time.sleep(1)
-            log("dev watch 构建已启动")
+            log("dev watch 构建已启动（增量热更新）")
         else:
             r = subprocess.run(cmd, text=True, env=child_env)
             if r.returncode != 0:
                 log("编译失败")
                 return r.returncode
+            if args.watch:
+                # 生产 + 热更新：监听源码，变化后重新生产构建
+                def _prod_watch():
+                    def snap():
+                        out = {}
+                        for base, dirs, names in os.walk(args.project):
+                            dirs[:] = [d for d in dirs if d not in (
+                                "node_modules", "unpackage", ".git", "dist", ".hbuilderx")]
+                            for n in names:
+                                f = os.path.join(base, n)
+                                try:
+                                    out[f] = os.path.getmtime(f)
+                                except OSError:
+                                    pass
+                        return out
+                    last = snap()
+                    while True:
+                        time.sleep(2)
+                        cur = snap()
+                        if cur == last:
+                            continue
+                        last = cur
+                        log("[热更新] 检测到源码变化，重新生产构建…")
+                        rr = subprocess.run(cmd, env=child_env,
+                                            stdout=subprocess.DEVNULL,
+                                            stderr=subprocess.DEVNULL)
+                        if rr.returncode == 0:
+                            log("[热更新] 生产构建完成，等待推送")
+                        else:
+                            log("[热更新] 生产构建失败")
+
+                threading.Thread(target=_prod_watch, daemon=True).start()
+                log("生产热更新已开启（源码变化后重新打包）")
 
     appid = args.appid or (_read_appid(args.project) if args.project else "") or "HBuilder"
 
@@ -1841,7 +1879,8 @@ def main():
     a.add_argument("--base-package", default="io.dcloud.HBuilder")
     a.add_argument("--base-apk", help="自定义基座 APK 路径（自动安装并识别包名）")
     a.add_argument("--port", type=int, help="固定 WebSocket 端口")
-    a.add_argument("--watch", action="store_true", help="监听输出目录变化并热更新")
+    a.add_argument("--watch", action="store_true",
+                   help="热更新：默认生产模式（源码变化重新打包）；与 --dev 同用时为 dev 增量")
     a.add_argument("--dev", action="store_true", help="使用开发构建（dev，默认生产构建）")
     a.add_argument("--modern", action="store_true", help="使用现代 JS（WebView 90+），默认 ES5 兼容")
     a.add_argument("--browserslist", help="自定义 browserslist")
